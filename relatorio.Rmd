@@ -1,0 +1,143 @@
+---
+title: "Desempenho Fundos"
+author: "Bruno"
+date: "18/04/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE )
+```
+
+
+```{r}
+
+library(tidyverse)
+library(readxl)
+library(tidymodels)
+library(nlme)
+library(lubridate)
+
+```
+
+
+# Separando treino/validação e teste
+
+
+```{r}
+
+dados <- read_excel("dados/base_fundos.xlsx") %>% 
+    janitor::clean_names() %>% 
+    mutate(
+        across(
+            .cols = c(ap_in, mov_min, sharp_12, vol_total, sald_perm),
+            .fns = as.numeric
+        )
+    ) %>% 
+    mutate(
+        percent_tx_perf = str_extract(percent_tx_perf, "[0-9]*") %>% as.numeric() 
+    ) %>% 
+    mutate(
+        tempo_de_vida = 2021 - year(fundacao)
+    )
+
+
+dado_separado <- initial_split(
+  data = dados, 
+  prop = 4/5
+)
+
+
+# Create data frames for the two sets:
+dado_treino <- training(dado_separado)
+dado_teste  <- testing(dado_separado)
+
+
+
+```
+
+
+# Análise exploratória
+
+
+```{r}
+
+skimr::skim(dado_treino)
+
+
+```
+
+# Criando o modelo random forest
+
+
+```{r}
+
+modelo_randforest <- rand_forest(
+    trees = tune(),
+    mtry = tune(),
+    min_n = tune()
+) %>% 
+    set_engine(
+        "ranger"
+    ) %>% 
+    set_mode(
+        "regression"
+    )
+    
+
+    
+
+```
+
+
+
+```{r}
+
+fluxo_rf <- workflow() %>% 
+    add_model(
+        modelo_randforest    
+    )
+
+```
+
+
+
+```{r}
+
+grid_rf = grid_regular(
+    mtry(range = c(2, 6)),
+    trees(range = c(100, 300 )),
+    min_n(range = c(100, 300))
+)
+
+
+```
+
+```{r}
+
+set.seed(1984)
+
+folds <- vfold_cv(dado_treino, v = 5, strata = st_inadimplencia )
+
+
+```
+
+
+
+
+```{r}
+
+resultado_rf <- fluxo_rf %>% 
+    tune_grid(
+        resamples = 
+    )
+    
+
+
+```
+
+
+
+
+
+
