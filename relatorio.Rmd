@@ -599,12 +599,12 @@ fit_final_lm$.workflow[[1]] %>%
 ```{r}
 
 
-performance_teste_lm <- fit_final_lm%>% 
+performance_teste_lm <- fit_final_lm %>% 
   collect_metrics()
 
 
-performance_teste <- fit_final %>% 
-  collect_metrics()
+performance_predictions_lm <- fit_final_lm %>% 
+  collect_predictions()
 
 
 ```
