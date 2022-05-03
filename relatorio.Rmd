@@ -19,6 +19,8 @@ library(nlme)
 library(lubridate)
 library(shadowtext)
 library(vip)
+library(multilevelmod)
+
 
 ```
 
@@ -96,6 +98,9 @@ modelo_randforest <- rand_forest(
 ```
 
 
+Aqui só tem variáveis que são características dos fundos, que por premisa consideramos conhecidas antes do momento em que o desepeho estã sendo medido. Incluímos a vol, porque consideramos que a vol é uma característica do fundo
+
+
 ```{r}
 
 
@@ -109,7 +114,8 @@ receita_pre <- dado_treino %>%
            tx_adm +
            percent_tx_perf +
            tempo_de_vida +
-           vol_total 
+           vol_total +
+           pl20
         ) %>% 
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) 
   # step_corr(all_predictors()) %>% 
@@ -118,6 +124,8 @@ receita_pre <- dado_treino %>%
 
 ```
 
+
+fluxo de trabalho com o modelo e a receita de pré procesamento. A random forest funciona bem com atributos que não estão na msma escala, por isso não normalizamos
 
 
 ```{r}
@@ -133,13 +141,16 @@ fluxo_rf <- workflow() %>%
 ```
 
 
+grid de hiperparâmetros: combinações de hiperparãmetros a serem testados
+
 
 ```{r}
 
 grid_rf = grid_regular(
-    mtry(range = c(2, 8)),
-    trees(range = c(100, 300 )),
-    min_n(range = c(1, 20))
+    mtry(range = c(2, 8)), # número de atributos testados a cada quebra das árvores de decisão
+    trees(range = c(100, 300 )), #número de ãrvores de decis]apo da floresta
+    min_n(range = c(1, 20)), #tamanho limite pra qiuuebra do nó
+    levels = 3
 )
 
 
@@ -166,6 +177,12 @@ resultado_rf <- fluxo_rf %>%
 
 
 ```
+
+
+https://en.wikipedia.org/wiki/Root-mean-square_deviation
+
+https://en.wikipedia.org/wiki/Coefficient_of_determination
+
 
 
 ```{r}
@@ -255,6 +272,9 @@ fit_final <- workflow_final %>%
 performance_teste <- fit_final %>% 
   collect_metrics()
 
+
+performance_teste
+
 ```
 
 
@@ -293,6 +313,9 @@ modelo_elastic <- linear_reg(
 
 ```
 
+O modelo elasticnet conjuga lasso e ridge. Esses modelos penalizam o resultado pela existência (lasso, groso modo) e pelo tamanho (ridge) dos coeficientes. Para que esse modelo funcione bem, é preciso normalizar e centralizar as variáveis
+
+
 
 ```{r}
 
@@ -307,7 +330,8 @@ receita_pre_elastic <- dado_treino %>%
            tx_adm +
            percent_tx_perf +
            tempo_de_vida +
-           vol_total 
+           vol_total +
+            pl20
         ) %>% 
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>% 
   # step_corr(all_predictors()) %>% 
@@ -443,6 +467,11 @@ performance_teste_elastic <- fit_final_elastic %>%
 
 ```
 
+
+Os coeficientes são relativos ao desvio padrão de cada variável explicativa, já que elas foram normalizadas.
+
+
+
 ```{r}
 
 fit_final_elastic$.workflow[[1]] %>% 
@@ -487,7 +516,8 @@ receita_lm <- dado_treino %>%
            tx_adm +
            percent_tx_perf +
            tempo_de_vida +
-           vol_total 
+           vol_total +
+            pl20
         ) %>% 
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) 
 
@@ -584,6 +614,8 @@ fit_final_lm <- workflow_final_lm %>%
 ```
 
 
+Este coeficiente está referente ao valor original da variável
+
 
 ```{r}
 
@@ -593,6 +625,229 @@ fit_final_lm$.workflow[[1]] %>%
 
 
 ```
+
+# Criando o modelo multinivel
+
+
+```{r}
+
+modelo_lmer <- linear_reg(
+) %>% 
+    set_engine(
+        "lmer"
+    ) %>% 
+    set_mode(
+        "regression"
+    )
+    
+
+
+```
+
+
+```{r}
+
+
+receita_lmer <- dado_treino %>% 
+  recipe(sharp_12 ~ 
+           ap_in + 
+           mov_min + 
+           sald_perm + 
+           resg_cot + 
+           resg_liq + 
+           tx_adm +
+           percent_tx_perf +
+           tempo_de_vida +
+           vol_total +
+           pl20 +
+           anbima 
+        ) 
+
+
+
+dados_anbima <- dados %>% 
+    mutate(
+        tipo_anbima = case_when(
+            str_detect(anbima, "Ações") ~ "Acoes",
+            str_detect(anbima, "Renda Fixa") ~ "Renda Fixa",
+            str_detect(anbima, "Multimercado") ~ "Multimercado",
+            TRUE ~ "Multimercado"
+        )
+    )
+
+
+# mixed_model_fit <- 
+#   linear_reg() %>% set_engine("lmer") %>% 
+#   fit(sharp_12 ~ 
+           ap_in +
+           mov_min +
+           sald_perm +
+           resg_cot +
+           resg_liq +
+           tx_adm +
+           percent_tx_perf +
+           tempo_de_vida +
+           vol_total +
+           pl20 +
+#            (tipo_anbima | vol_total)  , data = dados_anbima)
+
+
+mixed_model_fit <-
+  linear_reg() %>% 
+  set_engine("lme",  random = ~ 1 | tipo_anbima) %>%
+  fit(sharp_12 ~
+           ap_in +
+           mov_min +
+           sald_perm +
+           resg_cot +
+           resg_liq +
+           tx_adm +
+           percent_tx_perf +
+           tempo_de_vida +
+           vol_total +
+           pl20 +
+           tipo_anbima + vol_total  , data = dados_anbima %>% drop_na()  )
+
+
+
+mixed_model_fit %>% 
+    extract_fit_engine()
+
+
+MuMIn::r.squaredGLMM(mixed_model_fit$fit)
+
+
+
+lm_fit <-
+  linear_reg() %>% 
+  set_engine("lm") %>%
+  fit(sharp_12 ~
+           ap_in +
+           mov_min +
+           sald_perm +
+           resg_cot +
+           resg_liq +
+           tx_adm +
+           percent_tx_perf +
+           poly(tempo_de_vida, 2) +
+           vol_total +
+           pl20 +
+           pl20 * ap_in +
+           tipo_anbima + 
+           vol_total  , data = dados_anbima %>% drop_na()  )
+
+
+summary(lm_fit$fit)
+
+
+
+
+
+```
+
+
+
+```{r}
+
+fluxo_lm <- workflow() %>% 
+    add_model(
+        modelo_lm    
+    ) %>% 
+  add_recipe(
+    receita_lm
+  ) 
+
+```
+
+
+
+```{r}
+
+grid_lm = grid_regular(
+    penalty(),
+    mixture(),
+    levels = 1
+)
+
+
+```
+
+
+
+
+```{r}
+
+resultado_lm <- fluxo_lm %>% 
+ tune_grid(resamples = folds, 
+            grid = grid_lm)
+    
+    
+
+
+```
+
+
+```{r}
+
+
+performance_lm <-  resultado_lm %>%
+  collect_metrics() 
+
+```
+
+```{r}
+
+perf_accuracy_lm <- performance_lm %>% 
+  filter(
+    .metric == "rsq"
+  )
+
+
+
+perf_accuracy_lm
+
+```
+
+
+
+```{r}
+
+melhor_modelo_lm <- resultado_lm %>%
+  select_best(metric = "rsq")  
+  
+workflow_final_lm <- fluxo_lm %>%
+  finalize_workflow(melhor_modelo_lm)
+
+
+
+```
+
+
+
+
+
+```{r}
+
+fit_final_lm <- workflow_final_lm %>%
+  last_fit(dado_separado)
+
+
+
+```
+
+
+Este coeficiente está referente ao valor original da variável
+
+
+```{r}
+
+fit_final_lm$.workflow[[1]] %>% 
+  pull_workflow_fit() %>% 
+  tidy()
+
+
+```
+
 
 
 
@@ -656,10 +911,27 @@ dt_cls_fit <- fluxo_dt %>% fit(dado_treino)
 
 class(dt_cls_fit$fit$fit$fit)
 
-rpart.plot::rpart.plot(dt_cls_fit$fit$fit$fit,  )
+rpart.plot::rpart.plot(dt_cls_fit$fit$fit$fit  )
 
 
 ```
+
+
+
+
+```{r}
+
+
+Modelo <- lme(fixed = R36M ~ TPMRC + RLIQ + TADM + TXPM + PL,
+                                    random = ~ RLIQ,
+                                    data = datan2,
+                                    method = "REML")
+
+
+
+
+```
+
 
 
 
